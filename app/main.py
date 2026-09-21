@@ -17,7 +17,7 @@ from fastapi.responses import JSONResponse
 load_dotenv()
 
 from app.parsing import extract_text_from_pdf, split_into_sections
-from app.extraction import extract_key_metrics
+from app.extraction import classify_sections_with_llm, extract_key_metrics
 
 app = FastAPI(title="Financial Document Analyzer", version="0.1.0")
 
@@ -62,7 +62,11 @@ async def upload_document(file: UploadFile = File(...)):
 
     try:
         text = extract_text_from_pdf(str(file_path))
-        sections = split_into_sections(text)
+        parsed_sections = split_into_sections(text)
+        classified_sections = classify_sections_with_llm(text)
+        # Keep parser-native financial sections for metric extraction and add
+        # classifier sections for documents with unusual headings.
+        sections = {**parsed_sections, **classified_sections}
         result = extract_key_metrics(sections)
 
         DOCUMENTS[document_id]["status"] = "complete"

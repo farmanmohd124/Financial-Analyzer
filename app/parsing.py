@@ -22,10 +22,21 @@ SECTION_MARKERS = [
     "item 1a",
     "item 3",
     "item 4",
+    "item 8",
     "part ii",
     "md&a",
     "risk factors",
     "financial statements",
+    "balance sheets",
+    "income statements",
+    "cash flows",
+    "comprehensive income",
+    "stockholders' equity",
+    "consolidated balance sheets",
+    "consolidated statements of income",
+    "consolidated statements of comprehensive income",
+    "consolidated statements of cash flows",
+    "consolidated statements of operations",
     "condensed consolidated statements of operations",
     "consolidated statements of operations",
     "notes to consolidated financial statements",
@@ -45,6 +56,17 @@ def extract_text_from_pdf(file_path: str) -> str:
             page_text = page.extract_text() or ""
             text_parts.append(page_text)
     return "\n".join(text_parts)
+
+
+def chunk_text(text: str, chunk_size: int = 12000, overlap: int = 500) -> list[str]:
+    """Split text into overlapping chunks for LLM classification."""
+    if not text:
+        return []
+    if chunk_size <= 0 or overlap < 0 or overlap >= chunk_size:
+        raise ValueError("chunk_size must be positive and overlap must be smaller than chunk_size")
+
+    step = chunk_size - overlap
+    return [text[start:start + chunk_size] for start in range(0, len(text), step)]
 
 
 def split_into_sections(text: str) -> dict[str, str]:
@@ -78,6 +100,28 @@ def split_into_sections(text: str) -> dict[str, str]:
     print(f"Total matched markers: {len(matched_markers)}")
 
     found_positions.sort(key=lambda x: x[0])
+    item_8_positions = [
+        position for position, marker in found_positions if marker == "item 8"
+    ]
+    statement_item_8_positions = [
+        position
+        for position in item_8_positions
+        if all(
+            phrase in text_lower[position:position + 12000]
+            for phrase in ("balance sheets", "income statements", "cash flows")
+        )
+    ]
+    item_8_position = (
+        statement_item_8_positions[0]
+        if statement_item_8_positions
+        else (item_8_positions[-1] if item_8_positions else None)
+    )
+    if item_8_position is not None:
+        found_positions = [
+            (position, marker)
+            for position, marker in found_positions
+            if marker != "item 8" or position == item_8_position
+        ]
 
     # TOC structure varies across filings, but its many markers tend to be
     # packed together near the start while real section headers are spread out.
@@ -116,5 +160,8 @@ def split_into_sections(text: str) -> dict[str, str]:
         chunk = text[start:end].strip()
         if key not in sections or len(chunk) > len(sections[key]):
             sections[key] = chunk
+
+    if item_8_position is not None:
+        sections["item_8"] = text[item_8_position:].strip()
 
     return sections

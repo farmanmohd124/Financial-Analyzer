@@ -10,35 +10,69 @@ Uses Groq's free API by default for LLM extraction.
 
 import json
 import os
+import time
 
 from groq import Groq
 
+from app.parsing import chunk_text
+
 client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
-EXTRACTION_MODEL = "openai/gpt-oss-20b"
+EXTRACTION_MODEL = "openai/gpt-oss-120b"
+CLASSIFICATION_MODEL = "openai/gpt-oss-20b"
+EXTRACTION_INPUT_CHAR_LIMIT = 14000
+EXTRACTION_MAX_OUTPUT_TOKENS = 3500
+
+CLASSIFICATION_PROMPT = """Classify this financial filing text chunk. Return ONLY valid JSON in exactly this shape:
+{{"contains_revenue_or_income_data": bool, "contains_balance_sheet_data": bool, "contains_cash_flow_data": bool, "contains_risk_factors": bool, "contains_management_discussion": bool}}
+You MUST include all five boolean fields in your response, even if the value is false.
+
+Use true only when the chunk contains the corresponding substantive content, not merely a table of contents reference.
+
+TEXT:
+{chunk}
+"""
 
 EXTRACTION_PROMPT = """You are a financial analyst extracting structured data from a company filing.
 
-Extract at most 12 of the most important metrics — prioritize revenue, net income, margins, EPS, and guidance over minor balance sheet line items.
+Extract every year of data available for each metric. Most 10-Ks show 2-3 years of comparison. Map company-specific terminology to these standardized field names, for example "net sales" or "total revenue" to "revenue", and "net income" or "net earnings" to "profit". If a metric has no data for a given year, omit that year's entry. If a metric has no data at all in the document, return an empty list []. Never guess or estimate a value that is not explicitly stated in the text.
 
-Read the text below and extract:
-1. Key financial metrics you can find (revenue, net income, gross margin, operating margin, EPS, guidance if mentioned) with their values and the period they refer to.
-2. Overall management sentiment/tone (positive, neutral, cautious, negative) based on language used, with 1-2 sentences of justification.
-3. Any notable risk factors or concerns explicitly mentioned.
+Extract these 12 standardized financial metrics, plus management sentiment and risk factors:
+- revenue
+- gross_profit
+- operating_income
+- profit
+- gross_margin
+- operating_margin
+- total_assets
+- total_liabilities
+- cash_and_equivalents
+- operating_cash_flow
+- free_cash_flow
+- eps
+- sentiment: label and a 1-2 sentence justification
+- risk_factors: explicitly mentioned concerns
 
 Respond with ONLY valid JSON, no preamble, no markdown fences, matching this exact shape:
 {{
-  "metrics": [
-    {{"name": "string", "value": "string", "period": "string"}}
-  ],
+    "revenue": [{{"period": "string", "value": "string"}}],
+    "gross_profit": [{{"period": "string", "value": "string"}}],
+    "operating_income": [{{"period": "string", "value": "string"}}],
+    "profit": [{{"period": "string", "value": "string"}}],
+    "gross_margin": [{{"period": "string", "value": "string"}}],
+    "operating_margin": [{{"period": "string", "value": "string"}}],
+    "total_assets": [{{"period": "string", "value": "string"}}],
+    "total_liabilities": [{{"period": "string", "value": "string"}}],
+    "cash_and_equivalents": [{{"period": "string", "value": "string"}}],
+    "operating_cash_flow": [{{"period": "string", "value": "string"}}],
+    "free_cash_flow": [{{"period": "string", "value": "string"}}],
+    "eps": [{{"period": "string", "value": "string"}}],
   "sentiment": {{
     "label": "positive | neutral | cautious | negative",
     "justification": "string"
   }},
   "risk_factors": ["string"]
 }}
-
-If a field cannot be found in the text, omit it rather than guessing.
 
 TEXT:
 {text}
@@ -48,10 +82,80 @@ TEXT:
 def _call_llm(prompt: str) -> str:
     response = client.chat.completions.create(
         model=EXTRACTION_MODEL,
-        max_tokens=4000,
+        max_tokens=EXTRACTION_MAX_OUTPUT_TOKENS,
         messages=[{"role": "user", "content": prompt}],
     )
     return response.choices[0].message.content
+
+
+def classify_chunk(chunk: str) -> dict[str, bool]:
+    """Classify one document chunk using the fast Groq model."""
+    started_at = time.perf_counter()
+    response = client.chat.completions.create(
+        model=CLASSIFICATION_MODEL,
+        max_tokens=300,
+        reasoning_effort="low",
+        messages=[{"role": "user", "content": CLASSIFICATION_PROMPT.format(chunk=chunk)}],
+    )
+    print(f"Chunk classification call took {time.perf_counter() - started_at:.2f}s")
+    content = response.choices[0].message.content
+    if not content or not content.strip():
+        print("Warning: empty classification response; skipping chunk")
+        return {
+            "contains_revenue_or_income_data": False,
+            "contains_balance_sheet_data": False,
+            "contains_cash_flow_data": False,
+            "contains_risk_factors": False,
+            "contains_management_discussion": False,
+        }
+
+    raw = content.strip()
+    print(f"Raw classification response: {raw!r}")
+    result = _parse_json_response(raw)
+    return {
+        "contains_revenue_or_income_data": bool(result.get("contains_revenue_or_income_data", False)),
+        "contains_balance_sheet_data": bool(result.get("contains_balance_sheet_data", False)),
+        "contains_cash_flow_data": bool(result.get("contains_cash_flow_data", False)),
+        "contains_risk_factors": bool(result.get("contains_risk_factors", False)),
+        "contains_management_discussion": bool(result.get("contains_management_discussion", False)),
+    }
+
+
+def classify_sections_with_llm(text: str) -> dict[str, str]:
+    """Classify overlapping chunks and assemble content by semantic section."""
+    started_at = time.perf_counter()
+    chunks = chunk_text(text)
+    sections = {
+        "revenue_or_income_data": "",
+        "balance_sheet_data": "",
+        "cash_flow_data": "",
+        "risk_factors": "",
+        "management_discussion": "",
+    }
+    tag_names = {
+        "contains_revenue_or_income_data": "revenue_or_income_data",
+        "contains_balance_sheet_data": "balance_sheet_data",
+        "contains_cash_flow_data": "cash_flow_data",
+        "contains_risk_factors": "risk_factors",
+        "contains_management_discussion": "management_discussion",
+    }
+
+    for index, chunk in enumerate(chunks):
+        try:
+            classifications = classify_chunk(chunk)
+        except Exception as error:
+            print(f"Warning: classification failed for chunk {index}: {error}")
+            classifications = {}
+        for classification_key, section_key in tag_names.items():
+            if classifications.get(classification_key, False) and len(sections[section_key]) < 8000:
+                remaining = 8000 - len(sections[section_key])
+                sections[section_key] += chunk[:remaining]
+        if index + 1 < len(chunks):
+            time.sleep(0.3)
+
+    elapsed = time.perf_counter() - started_at
+    print(f"Classified {len(chunks)} chunks in {elapsed:.2f}s")
+    return sections
 
 
 def _parse_json_response(raw: str) -> dict:
@@ -90,22 +194,40 @@ def extract_key_metrics(sections: dict[str, str]) -> dict:
     calls run in parallel (see README "scaling" notes).
     """
     priority_sections = [
-        "net_sales",
-        "total_net_sales",
-        "results_of_operations",
-        "liquidity_and_capital_resources",
-        "item_1a",  # risk factors
-        "full_document",
+        ("item_8", 12000),
+        ("balance_sheets", 4000),
+        ("income_statements", 4000),
+        ("cash_flows", 4000),
+        ("comprehensive_income", 1500),
+        ("consolidated_balance_sheets", 4000),
+        ("consolidated_statements_of_cash_flows", 4000),
+        ("consolidated_statements_of_income", 4000),
+        ("consolidated_statements_of_operations", 4000),
+        ("condensed_consolidated_statements_of_operations", 4000),
+        ("balance_sheet_data", 3000),
+        ("cash_flow_data", 3000),
+        ("net_sales", 2500),
+        ("total_net_sales", 2500),
+        ("results_of_operations", 2500),
+        ("liquidity_and_capital_resources", 2000),
+        ("revenue_or_income_data", 2500),
+        ("management_discussion", 1500),
+        ("item_1a", 1000),
+        ("risk_factors", 1000),
+        ("full_document", 1000),
     ]
 
     text_to_analyze = ""
-    for key in priority_sections:
-        if key in sections:
-            text_to_analyze += sections[key][:8000] + "\n\n"  # crude length cap for v1
+    for key, section_limit in priority_sections:
+        if key in sections and sections[key]:
+            remaining = EXTRACTION_INPUT_CHAR_LIMIT - len(text_to_analyze)
+            if remaining <= 0:
+                break
+            text_to_analyze += sections[key][:min(section_limit, remaining)] + "\n\n"
 
     if not text_to_analyze:
         # fall back to whatever sections exist
-        text_to_analyze = "\n\n".join(list(sections.values()))[:8000]
+        text_to_analyze = "\n\n".join(list(sections.values()))[:EXTRACTION_INPUT_CHAR_LIMIT]
 
     prompt = EXTRACTION_PROMPT.format(text=text_to_analyze)
     raw = _call_llm(prompt)

@@ -186,6 +186,86 @@ def _parse_json_response(raw: str) -> dict:
         return {"error": "failed_to_parse", "raw_response": raw}
 
 
+def _metric_label(metric_name: str) -> str:
+    labels = {
+        "revenue": "Revenue",
+        "gross_profit": "Gross Profit",
+        "operating_income": "Operating Income",
+        "profit": "Profit",
+        "gross_margin": "Gross Margin",
+        "operating_margin": "Operating Margin",
+        "total_assets": "Total Assets",
+        "total_liabilities": "Total Liabilities",
+        "cash_and_equivalents": "Cash and Equivalents",
+        "operating_cash_flow": "Operating Cash Flow",
+        "free_cash_flow": "Free Cash Flow",
+        "eps": "Earnings Per Share",
+    }
+    return labels.get(metric_name, metric_name.replace("_", " ").title())
+
+
+def _metric_unit(metric_name: str) -> str:
+    units = {
+        "revenue": "reported currency",
+        "gross_profit": "reported currency",
+        "operating_income": "reported currency",
+        "profit": "reported currency",
+        "gross_margin": "percent",
+        "operating_margin": "percent",
+        "total_assets": "reported currency",
+        "total_liabilities": "reported currency",
+        "cash_and_equivalents": "reported currency",
+        "operating_cash_flow": "reported currency",
+        "free_cash_flow": "reported currency",
+        "eps": "reported currency per share",
+    }
+    return units.get(metric_name, "reported value")
+
+
+def format_extracted_metrics(payload: dict) -> dict:
+    """Add human-readable labels and concise summary to the raw model output."""
+    if not isinstance(payload, dict):
+        return payload
+
+    formatted = {}
+    for metric_name, values in payload.items():
+        if metric_name in {"sentiment", "risk_factors"}:
+            formatted[metric_name] = values
+            continue
+
+        if not isinstance(values, list):
+            formatted[metric_name] = values
+            continue
+
+        enriched = []
+        for item in values:
+            if not isinstance(item, dict):
+                enriched.append(item)
+                continue
+            enriched.append({
+                "metric": metric_name,
+                "label": _metric_label(metric_name),
+                "period": item.get("period"),
+                "value": item.get("value"),
+                "unit": _metric_unit(metric_name),
+            })
+        formatted[metric_name] = enriched
+
+    summary_parts = []
+    for metric_name in ["revenue", "gross_profit", "operating_income", "profit", "eps"]:
+        values = formatted.get(metric_name, [])
+        if not values:
+            continue
+        latest = values[0]
+        period = latest.get("period")
+        value = latest.get("value")
+        label = latest.get("label", _metric_label(metric_name))
+        summary_parts.append(f"{label} in {period} was {value}")
+
+    formatted["summary"] = "; ".join(summary_parts) if summary_parts else "No summary metrics were extracted."
+    return formatted
+
+
 def extract_key_metrics(sections: dict[str, str]) -> dict:
     """
     Run extraction across the parsed sections. For v1, this
@@ -231,4 +311,5 @@ def extract_key_metrics(sections: dict[str, str]) -> dict:
 
     prompt = EXTRACTION_PROMPT.format(text=text_to_analyze)
     raw = _call_llm(prompt)
-    return _parse_json_response(raw)
+    parsed = _parse_json_response(raw)
+    return format_extracted_metrics(parsed)

@@ -8,6 +8,9 @@ tested this against a few real filings and see where it breaks.
 """
 
 import re
+from io import BytesIO
+from pathlib import Path
+from typing import BinaryIO
 
 import pdfplumber
 
@@ -48,7 +51,7 @@ SECTION_MARKERS = [
 ]
 
 
-def extract_text_from_pdf(file_path: str) -> str:
+def extract_text_from_pdf(file_path: str | Path | BinaryIO | BytesIO) -> str:
     """Extract raw text from a PDF, page by page."""
     text_parts = []
     with pdfplumber.open(file_path) as pdf:
@@ -165,3 +168,19 @@ def split_into_sections(text: str) -> dict[str, str]:
         sections["item_8"] = text[item_8_position:].strip()
 
     return sections
+
+
+def has_financial_statement_sections(sections: dict[str, str]) -> bool:
+    """Return whether parsing found enough financial content to skip LLM classification."""
+    financial_section_names = {
+        "item_8",
+        "balance_sheets",
+        "income_statements",
+        "cash_flows",
+        "consolidated_balance_sheets",
+        "consolidated_statements_of_income",
+        "consolidated_statements_of_cash_flows",
+        "consolidated_statements_of_operations",
+        "condensed_consolidated_statements_of_operations",
+    }
+    return any(len(sections.get(name, "")) >= 500 for name in financial_section_names)

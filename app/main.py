@@ -8,25 +8,36 @@ gets layered on top of this once the core loop works.
 
 import os
 import uuid
+from io import BytesIO
 from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, UploadFile, File, HTTPException
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 
 load_dotenv()
 
-from app.parsing import extract_text_from_pdf, split_into_sections
+from app.parsing import extract_text_from_pdf, has_financial_statement_sections, split_into_sections
 from app.extraction import classify_sections_with_llm, extract_key_metrics
+from app.database import DocumentDatabase
+from app.storage import store_pdf
 
 app = FastAPI(title="Financial Document Analyzer", version="0.1.0")
+STATIC_DIR = Path(__file__).parent / "static"
+app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# Local storage for now — swap for S3 once the core pipeline works (see README)
-UPLOAD_DIR = Path("uploads")
-UPLOAD_DIR.mkdir(exist_ok=True)
+database = DocumentDatabase(os.getenv("DATABASE_PATH", "./filingscope.db"))
 
-# In-memory store for now — swap for Postgres once you add persistence
-DOCUMENTS: dict[str, dict] = {}
+
+@app.on_event("startup")
+def initialize_database():
+    database.initialize()
+
+
+@app.get("/", include_in_schema=False)
+def home():
+    return FileResponse(STATIC_DIR / "index.html")
 
 
 @app.get("/health")
@@ -48,35 +59,29 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PDF files are supported right now")
 
     document_id = str(uuid.uuid4())
-    file_path = UPLOAD_DIR / f"{document_id}.pdf"
-
     contents = await file.read()
-    file_path.write_bytes(contents)
-
-    DOCUMENTS[document_id] = {
-        "id": document_id,
-        "filename": file.filename,
-        "status": "processing",
-        "result": None,
-    }
+    database.save_document(document_id, file.filename, "processing")
 
     try:
-        text = extract_text_from_pdf(str(file_path))
+        store_pdf(document_id, contents)
+        text = extract_text_from_pdf(BytesIO(contents))
         parsed_sections = split_into_sections(text)
-        classified_sections = classify_sections_with_llm(text)
+        if has_financial_statement_sections(parsed_sections):
+            print("Skipping section classification; financial statement sections were parsed")
+            classified_sections = {}
+        else:
+            classified_sections = classify_sections_with_llm(text)
         # Keep parser-native financial sections for metric extraction and add
         # classifier sections for documents with unusual headings.
         sections = {**parsed_sections, **classified_sections}
         result = extract_key_metrics(sections)
 
-        DOCUMENTS[document_id]["status"] = "complete"
-        DOCUMENTS[document_id]["result"] = result
+        database.save_document(document_id, file.filename, "complete", result=result)
     except Exception as e:
-        DOCUMENTS[document_id]["status"] = "failed"
-        DOCUMENTS[document_id]["error"] = str(e)
+        database.save_document(document_id, file.filename, "failed", error=str(e))
         raise HTTPException(status_code=500, detail=f"Processing failed: {e}")
 
-    return JSONResponse(DOCUMENTS[document_id])
+    return JSONResponse(database.get_document(document_id))
 
 
 @app.post("/debug/parse")
@@ -91,7 +96,8 @@ async def debug_parse(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="Only PDF files are supported right now")
 
     contents = await file.read()
-    temp_path = UPLOAD_DIR / f"debug_{uuid.uuid4()}_{file.filename}"
+    temp_path = Path("uploads") / f"debug_{uuid.uuid4()}_{Path(file.filename).name}"
+    temp_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path.write_bytes(contents)
 
     text = extract_text_from_pdf(str(temp_path))
@@ -106,7 +112,7 @@ async def debug_parse(file: UploadFile = File(...)):
 
 @app.get("/documents/{document_id}")
 def get_document(document_id: str):
-    doc = DOCUMENTS.get(document_id)
+    doc = database.get_document(document_id)
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
     return doc
@@ -114,4 +120,4 @@ def get_document(document_id: str):
 
 @app.get("/documents")
 def list_documents():
-    return list(DOCUMENTS.values())
+    return database.list_documents()

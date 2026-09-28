@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f4f7f2">
+  <title>Filingscope | Financial document analyzer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=DM+Sans:wght@400;500;600;700&family=Manrope:wght@500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/styles.css">
+  <script src="/static/app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Filingscope home">
+      <span class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></span>
+      <span>filingscope</span>
+    </a>
+    <div class="topbar-meta"><span class="status-dot"></span><span>LOCAL WORKSPACE</span><a href="/docs" target="_blank" rel="noreferrer">API docs <span aria-hidden="true">↗</span></a></div>
+  </header>
+  <main class="layout">
+    <section class="intro">
+      <div>
+        <p class="eyebrow">FINANCIAL DOCUMENT ANALYZER <span>·</span> V1</p>
+        <h1>Make the numbers<br><em>make sense.</em></h1>
+        <p class="intro-copy">Upload a company filing to extract key financials, management tone, and disclosed risks.</p>
+      </div>
+      <div class="intro-index" aria-hidden="true"><span>01</span><i></i><span>ANALYZE</span></div>
+    </section>
+    <section class="workspace" aria-label="Document analysis workspace">
+      <aside class="upload-panel">
+        <div class="panel-heading"><span class="step-number">01</span><div><h2>Analyze a filing</h2><p>Start with a company PDF</p></div></div>
+        <form id="upload-form">
+          <label class="dropzone" id="dropzone" for="file-input" tabindex="0">
+            <input id="file-input" name="file" type="file" accept="application/pdf,.pdf" hidden>
+            <span class="upload-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5M4.5 14.5v4A1.5 1.5 0 0 0 6 20h12a1.5 1.5 0 0 0 1.5-1.5v-4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+            <strong id="file-label">Choose a PDF to analyze</strong>
+            <span class="drop-hint">or drag and drop it here</span>
+            <span class="file-limit">PDF files only</span>
+          </label>
+          <button class="analyze-button" id="analyze-button" type="submit" disabled><span>Analyze document</span><span aria-hidden="true">↗</span></button>
+        </form>
+        <p class="notice"><span aria-hidden="true">i</span> Analysis runs through this app. Results remain in memory until the server restarts.</p>
+        <div class="upload-message" id="upload-message" role="status" aria-live="polite" hidden></div>
+        <div class="recent-block">
+          <div class="subheading"><h3>Recent documents</h3><span id="recent-count">0</span></div>
+          <div class="recent-list" id="recent-list"><p class="empty-recent">Your analyzed filings will appear here.</p></div>
+        </div>
+      </aside>
+      <section class="results-panel" aria-label="Analysis results" aria-live="polite">
+        <div class="results-empty" id="results-empty">
+          <div class="empty-art" aria-hidden="true"><span class="art-line line-one"></span><span class="art-line line-two"></span><span class="art-line line-three"></span><span class="art-dot"></span></div>
+          <p class="eyebrow">YOUR WORKSPACE</p>
+          <h2>Clear context.<br>Better decisions.</h2>
+          <p>Upload an annual or quarterly filing to see its key figures and what they describe.</p>
+          <span class="empty-footnote"><span class="status-dot"></span> READY FOR A PDF</span>
+        </div>
+        <div id="results-content" hidden>
+          <div class="result-header">
+            <div><p class="eyebrow">ANALYSIS RESULT</p><h2 id="result-filename">Document</h2><p class="result-meta" id="result-meta"></p></div>
+            <button class="icon-button" id="download-json" type="button" title="Download result as JSON" aria-label="Download result as JSON"><svg viewBox="0 0 24 24" fill="none"><path d="M12 4v11m0 0 4-4m-4 4-4-4M5 16v3a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg></button>
+          </div>
+          <div class="summary-strip"><span class="summary-icon" aria-hidden="true">↗</span><div><p class="eyebrow">AT A GLANCE</p><p id="summary-text"></p></div></div>
+          <div class="section-heading"><div><p class="eyebrow">REPORTED FIGURES</p><h3>Financial overview</h3></div><span class="unit-note">Values and units as reported in the filing</span></div>
+          <div id="metrics-groups" class="metrics-groups"></div>
+          <div class="insights-grid">
+            <section class="insight-block"><div class="section-heading compact"><div><p class="eyebrow">MANAGEMENT TONE</p><h3>Sentiment</h3></div></div><div id="sentiment-content" class="sentiment-content"></div></section>
+            <section class="insight-block risks-block"><div class="section-heading compact"><div><p class="eyebrow">DISCLOSED CONCERNS</p><h3>Risk factors</h3></div></div><div id="risk-content" class="risk-content"></div></section>
+          </div>
+          <p class="result-disclaimer">Extracted by AI from the uploaded filing. Verify figures against the source document before relying on them.</p>
+        </div>
+      </section>
+    </section>
+    <footer><span>FILINGSCOPE <span class="footer-separator">/</span> FINANCIAL DOCUMENT ANALYZER</span><span>LOCAL ANALYSIS TOOL</span></footer>
+  </main>
+</body>
+</html>
